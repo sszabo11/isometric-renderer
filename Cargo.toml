@@ -1,0 +1,11 @@
+[package]
+name = "isometric"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+image = "0.25.10"
+pixels = "0.17.2"
+rand = "0.10.3"
+winit = "0.30.13"
