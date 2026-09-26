@@ -22,7 +22,7 @@ struct Tile {
 impl Tile {
     fn empty(w: usize, h: usize) -> Self {
         Self {
-            pxs: vec![(0, 0, 0, 255); w * h],
+            pxs: vec![(0, 0, 0, 0); w * h],
         }
     }
 
@@ -77,8 +77,8 @@ impl Grid {
 }
 
 fn main() {
-    const GRID_WIDTH: u32 = 128;
-    const GRID_HEIGHT: u32 = 128;
+    const GRID_WIDTH: u32 = 32;
+    const GRID_HEIGHT: u32 = 32;
     const TILE_WIDTH: u32 = 32;
     const TILE_HEIGHT: u32 = 32;
     const SCREEN_WIDTH: u32 = GRID_WIDTH * TILE_WIDTH;
@@ -103,13 +103,24 @@ fn main() {
             );
         }
     }
+    let font_data =
+        include_bytes!("../fonts/Carrois_Gothic_SC/CarroisGothicSC-Regular.ttf") as &[u8];
+    let font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
+        .expect("failed to load font");
 
     let mut app = App {
         grid,
         pixels: None,
         window: None,
+        grid_tiles_width: SCREEN_WIDTH,
+        grid_tiles_height: SCREEN_WIDTH,
         screen_width: SCREEN_WIDTH,
         screen_height: SCREEN_HEIGHT,
+        font,
+        mouse_x: 0.,
+        mouse_y: 0.,
+        origin_y: 0,
+        origin_x: 0,
     };
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
