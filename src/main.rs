@@ -8,9 +8,10 @@ use winit::{
     window,
 };
 
-use crate::app::App;
+use crate::app::{App, read_tile_file};
 
 mod app;
+mod sprite;
 
 type Px = (u8, u8, u8, u8);
 
@@ -70,6 +71,19 @@ impl Grid {
         }
     }
 
+    fn from_path(path: &str) -> Self {
+        let (tiles, tile_w, tile_h, grid_w, grid_h) = read_tile_file(path);
+
+        let mut g = Self::empty(grid_w, grid_h, tile_w, tile_h);
+        for y in 0..grid_h {
+            for x in 0..grid_w {
+                let i = y * grid_w + x;
+                g.set_tile(x, y, tiles[i as usize].pxs.clone());
+            }
+        }
+        g
+    }
+
     fn set_tile(&mut self, x: u32, y: u32, pxs: Vec<Px>) {
         let i = (y * self.width + x) as usize;
         self.tiles[i].pxs = pxs;
@@ -84,25 +98,26 @@ fn main() {
     const SCREEN_WIDTH: u32 = GRID_WIDTH * TILE_WIDTH;
     const SCREEN_HEIGHT: u32 = GRID_HEIGHT * TILE_HEIGHT;
 
-    let mut grid = Grid::empty(GRID_WIDTH, GRID_HEIGHT, TILE_WIDTH, TILE_HEIGHT);
+    let mut grid = Grid::from_path("./tiles.txt");
+    //let mut grid = Grid::empty(GRID_WIDTH, GRID_HEIGHT, TILE_WIDTH, TILE_HEIGHT);
 
-    let tiles_dir =
-        "/home/rabbit/Downloads/Forest_Isometric_Pack_Free/Forest Isometric Pack Free/Tileset";
+    //let tiles_dir = "/home/rabbit/Downloads/Forest_Isometric_Pack_Free/Forest Isometric Pack Free/Tileset";
+    let tiles_dir = "/home/rabbit/Downloads/isometric tileset/separated images";
     let files = fs::read_dir(tiles_dir).unwrap();
     let paths: Vec<_> = files.map(|f| f.unwrap().path()).collect();
 
-    let mut rng = rand::rng();
-    for x in 0..GRID_WIDTH {
-        for y in 0..GRID_HEIGHT {
-            let idx = rng.random_range(0..paths.len());
+    //let mut rng = rand::rng();
+    //for x in 0..GRID_WIDTH {
+    //    for y in 0..GRID_HEIGHT {
+    //        let idx = rng.random_range(0..paths.len());
 
-            grid.set_tile(
-                x,
-                y,
-                Tile::from_image(paths[idx].to_str().unwrap()).unwrap().pxs,
-            );
-        }
-    }
+    //        grid.set_tile(
+    //            x,
+    //            y,
+    //            Tile::from_image(paths[idx].to_str().unwrap()).unwrap().pxs,
+    //        );
+    //    }
+    //}
     let font_data =
         include_bytes!("../fonts/Carrois_Gothic_SC/CarroisGothicSC-Regular.ttf") as &[u8];
     let font = fontdue::Font::from_bytes(font_data, fontdue::FontSettings::default())
@@ -119,8 +134,11 @@ fn main() {
         font,
         mouse_x: 0.,
         mouse_y: 0.,
-        origin_y: 0,
-        origin_x: 0,
+        tile_n: 1,
+        origin_x: 0.,
+        origin_y: 0.,
+        zoom: 1.,
+        sprites: vec![],
     };
 
     let event_loop = EventLoop::new().expect("failed to create event loop");
