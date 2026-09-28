@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, time::Instant};
 
 use anyhow::Result;
 use image::{GenericImageView, ImageReader};
@@ -139,6 +139,10 @@ fn main() {
         origin_y: 0.,
         zoom: 1.,
         sprites: vec![],
+        tick: 0,
+        target_zoom: 1.,
+        zoom_anchor: (0., 0.),
+        last_frame: Instant::now(),
     };
 
     let event_loop = EventLoop::new().expect("failed to create event loop");

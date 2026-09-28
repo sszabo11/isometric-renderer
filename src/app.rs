@@ -34,6 +34,10 @@ pub struct App {
     pub sprites: Vec<Sprite>,
     pub tile_n: u32,
     pub zoom: f32,
+    pub target_zoom: f32,
+    pub zoom_anchor: (f32, f32), // screen point that should stay fixed while zooming
+    pub last_frame: std::time::Instant,
+    pub tick: u32,
 }
 
 pub fn read_tile_file(path: &str) -> (Vec<Tile>, u32, u32, u32, u32) {
@@ -52,7 +56,6 @@ pub fn read_tile_file(path: &str) -> (Vec<Tile>, u32, u32, u32, u32) {
         t.pxs.clear();
         for px_line in tile.split("[") {
             let values: Vec<&str> = px_line.split_whitespace().collect();
-            println!("{:?}", values);
             let d: Vec<String> = values
                 .iter()
                 .map(|val| {
@@ -159,18 +162,27 @@ fn draw_text(
 }
 impl App {
     pub fn draw(&mut self) -> Result<(), Error> {
-        let base_canvas_w = self.grid.tile_width as usize;
-        let base_canvas_h = self.grid.tile_height as usize;
+        //let base_canvas_w = self.grid.tile_width as usize;
+        //let base_canvas_h = self.grid.tile_height as usize;
         let tile_width = (self.grid.tile_width as f32 * self.zoom) as usize;
-        let base_footprint_w = base_canvas_w;
+        //let base_footprint_w = base_canvas_w;
 
-        let canvas_h = (base_canvas_h as f32 * self.zoom) as usize;
-        let footprint_w = (base_footprint_w as f32 * self.zoom) as usize;
-        let footprint_h = footprint_w / 2;
+        //let canvas_h = (base_canvas_h as f32 * self.zoom) as usize;
+
+        //let footprint_w = (base_footprint_w as f32 * self.zoom) as usize;
+        //let footprint_h = footprint_w / 2;
 
         let tile_height = (self.grid.tile_height as f32 * self.zoom) as usize;
         let screen_width = self.screen_width as usize;
         let screen_height = self.screen_height as usize;
+
+        let base_w = self.grid.tile_width as usize;
+        let base_h = self.grid.tile_height as usize;
+
+        let footprint_w = base_w as f32 * self.zoom;
+        let footprint_h = footprint_w / 2.0;
+        let canvas_w = footprint_w;
+        let canvas_h = base_h as f32 * self.zoom;
 
         let x_start = self.origin_x as isize;
         let y_start = self.origin_y as isize;
@@ -193,8 +205,8 @@ impl App {
                     // Fill inside tile
                     for py in 0..tile_height {
                         for px in 0..tile_width {
-                            let src_x = ((px as f32 / self.zoom) as usize).min(base_canvas_w - 1);
-                            let src_y = ((py as f32 / self.zoom) as usize).min(base_canvas_h - 1);
+                            let src_x = ((px as f32 / self.zoom) as usize).min(base_w - 1);
+                            let src_y = ((py as f32 / self.zoom) as usize).min(base_h - 1);
 
                             let tile_px = tile.pxs[src_y * self.grid.tile_width as usize + src_x];
                             let screen_x = iso_x + px as isize;
@@ -231,8 +243,32 @@ impl App {
                 self.origin_y,
                 self.zoom,
                 self.grid.tile_width,
-                3.,
-                15.,
+                0.,
+                6.,
+                &self.sprites[1],
+            );
+            draw_sprite(
+                frame,
+                screen_width,
+                screen_height,
+                self.origin_x,
+                self.origin_y,
+                self.zoom,
+                self.grid.tile_width,
+                6. + self.tick as f32 / 100.,
+                10.4,
+                &self.sprites[3],
+            );
+            draw_sprite(
+                frame,
+                screen_width,
+                screen_height,
+                self.origin_x,
+                self.origin_y,
+                self.zoom,
+                self.grid.tile_width,
+                6. + self.tick as f32 / 100.,
+                10.4,
                 &self.sprites[0],
             );
             draw_text(
@@ -276,7 +312,30 @@ impl App {
 
         Ok(())
     }
+    fn update_zoom(&mut self, dt: f32) -> bool {
+        if (self.target_zoom - self.zoom).abs() < 0.0005 {
+            return false;
+        }
 
+        // Frame-rate-independent easing. Higher constant = snappier.
+        let t = 1.0 - (-12.0 * dt).exp();
+        // Interpolate in log space so zooming in and out feel symmetric.
+        let mut new_zoom = self.zoom * (self.target_zoom / self.zoom).powf(t);
+
+        // snap when close enough, so it settles exactly
+        if (new_zoom - self.target_zoom).abs() < 0.001 {
+            new_zoom = self.target_zoom;
+        }
+
+        // keep the point under the cursor fixed, on every animation frame
+        let ratio = new_zoom / self.zoom;
+        let (ax, ay) = self.zoom_anchor;
+        self.origin_x = ax - (ax - self.origin_x) * ratio;
+        self.origin_y = ay - (ay - self.origin_y) * ratio;
+        self.zoom = new_zoom;
+
+        true
+    }
     fn get_tile(&self, mouse_x: f32, mouse_y: f32) -> (i32, i32) {
         let footprint_w = self.grid.tile_width as f32 * self.zoom;
         let footprint_h = footprint_w / 2.0;
@@ -295,6 +354,7 @@ impl App {
         let ty = (rel_y / half_h - rel_x / half_w) / 2.0;
 
         let selected_x = tx.floor() as i32;
+        println!("se: {}", selected_x);
         let selected_y = ty.floor() as i32;
         (selected_x, selected_y)
     }
@@ -330,10 +390,23 @@ impl ApplicationHandler for App {
         self.origin_y = self.screen_height as f32 / 2.;
         self.window = Some(window);
         self.pixels = Some(pixels);
+        self.sprites = vec![];
 
-        let path = "/home/rabbit/Downloads/isometric tileset/sprites/train-r4.png";
+        let path = "/home/rabbit/Downloads/isometric tileset/sprites/leading-tr.png";
         let train_sprite = load_sprite(path).unwrap();
-        self.sprites = vec![train_sprite];
+        self.sprites.push(train_sprite);
+
+        let path = "/home/rabbit/Downloads/isometric tileset/sprites/station5.png";
+        let train_sprite = load_sprite(path).unwrap();
+        self.sprites.push(train_sprite);
+
+        let path = "/home/rabbit/Downloads/isometric tileset/sprites/hopper.png";
+        let train_sprite = load_sprite(path).unwrap();
+        self.sprites.push(train_sprite);
+
+        let path = "/home/rabbit/Downloads/isometric tileset/sprites/carriage2.png";
+        let train_sprite = load_sprite(path).unwrap();
+        self.sprites.push(train_sprite);
         self.window.as_ref().unwrap().request_redraw();
     }
 
@@ -403,21 +476,30 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_amount = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01, // trackpads report pixels, scale down
+                //let scroll_amount = match delta {
+                //    MouseScrollDelta::LineDelta(_, y) => y,
+                //    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01, // trackpads report pixels, scale down
+                //};
+                let scroll = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y / 2.,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 500.0,
                 };
+
+                // multiplicative: every notch is the same percentage change
+                self.target_zoom = (self.target_zoom * 1.15_f32.powf(scroll)).clamp(0.25, 4.0);
+                self.zoom_anchor = (self.mouse_x, self.mouse_y);
+                self.window.as_ref().unwrap().request_redraw();
 
                 //self.zoom += scroll_amount * 0.1; // tune sensitivity to taste
                 //self.zoom = self.zoom.clamp(0.25, 4.0); // prevent zooming to zero or absurdly large
 
-                let old_zoom = self.zoom;
-                self.zoom = (self.zoom + scroll_amount * 0.1).clamp(0.25, 4.0);
-                let zoom_ratio = self.zoom / old_zoom;
+                //let old_zoom = self.zoom;
+                //self.zoom = (self.zoom + scroll_amount * 0.1).clamp(0.25, 4.0);
+                //let zoom_ratio = self.zoom / old_zoom;
 
-                // keep the point under the mouse stationary on screen
-                self.origin_x = self.mouse_x - (self.mouse_x - self.origin_x as f32) * zoom_ratio;
-                self.origin_y = self.mouse_y - (self.mouse_y - self.origin_y as f32) * zoom_ratio;
+                //// keep the point under the mouse stationary on screen
+                //self.origin_x = self.mouse_x - (self.mouse_x - self.origin_x as f32) * zoom_ratio;
+                //self.origin_y = self.mouse_y - (self.mouse_y - self.origin_y as f32) * zoom_ratio;
 
                 //self.window.as_ref().unwrap().request_redraw();
             }
@@ -467,9 +549,23 @@ impl ApplicationHandler for App {
                 //}
             }
             WindowEvent::RedrawRequested => {
-                if let Err(err) = self.draw() {
+                let now = std::time::Instant::now();
+                // clamp dt: after idle time it could be seconds, which would skip the animation
+                let dt = (now - self.last_frame).as_secs_f32().min(1.0 / 30.0);
+                self.last_frame = now;
+
+                let still_zooming = self.update_zoom(dt);
+
+                self.tick += 1;
+                if self.draw().is_err() {
                     event_loop.exit();
                 }
+                if still_zooming {
+                    self.window.as_ref().unwrap().request_redraw();
+                }
+                //if let Err(err) = self.draw() {
+                //    event_loop.exit();
+                //}
             }
             _ => {}
         }
