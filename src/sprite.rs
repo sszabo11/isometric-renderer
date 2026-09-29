@@ -1,7 +1,7 @@
 use anyhow::Result;
 use image::{GenericImageView, ImageReader};
 
-use crate::Px;
+use crate::grid::Px;
 
 pub struct Sprite {
     pub pxs: Vec<Px>,
