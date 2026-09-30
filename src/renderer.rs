@@ -17,6 +17,7 @@ use crate::{
     grid::{Grid, Tile},
     screen::Screen,
     sprite::{Sprite, draw_sprite, load_sprite},
+    vec::Vec3,
 };
 
 pub struct Renderer {
@@ -33,7 +34,7 @@ pub struct Renderer {
     pub font: fontdue::Font,
 
     pub screen: Screen,
-
+    //pub world: World,
     pub last_frame: std::time::Instant,
     pub tick: u32,
 }
@@ -201,9 +202,11 @@ impl Renderer {
                             let src_x = ((px as f32 / zoom) as usize).min(base_w - 1);
                             let src_y = ((py as f32 / zoom) as usize).min(base_h - 1);
 
+                            let hs = 2;
                             let tile_px = tile.pxs[src_y * self.grid.tile_width as usize + src_x];
+                            let z = tile.z;
                             let screen_x = iso_x + px as isize;
-                            let screen_y = iso_y + py as isize;
+                            let screen_y = iso_y + py as isize - (z * hs) as isize;
 
                             if screen_x < 0
                                 || screen_y < 0
@@ -225,42 +228,99 @@ impl Renderer {
                     }
                 }
             }
-            draw_sprite(
-                frame,
-                screen_width,
-                screen_height,
-                origin_x,
-                origin_y,
-                zoom,
-                self.grid.tile_width,
-                0.,
-                6.,
-                &self.screen.sprites[1],
-            );
-            draw_sprite(
-                frame,
-                screen_width,
-                screen_height,
-                origin_x,
-                origin_y,
-                zoom,
-                self.grid.tile_width,
-                6. + self.tick as f32 / 100.,
-                10.4,
-                &self.screen.sprites[3],
-            );
-            draw_sprite(
-                frame,
-                screen_width,
-                screen_height,
-                origin_x,
-                origin_y,
-                zoom,
-                self.grid.tile_width,
-                6. + self.tick as f32 / 100.,
-                10.4,
-                &self.screen.sprites[0],
-            );
+            if self.screen.sprites.len() > 0 {
+                for (i, sprite) in self.screen.sprites.iter_mut().enumerate() {
+                    falling(self.tick, sprite, self.screen.wind);
+                    //println!("i: {}", i);
+                    //println!("{:?}", self.screen.graphs);
+                    //println!("{:?}", self.screen.graphs[0]);
+
+                    if self.tick % 1 == 0 {
+                        let base = i * 3;
+                        self.screen.graphs[base + 0].push(sprite.vel);
+                        self.screen.graphs[base + 1].push(sprite.acc);
+                        self.screen.graphs[base + 2].push(sprite.pos);
+                    }
+
+                    if sprite.pos.z == 0. && !sprite.flag {
+                        println!("Saving...");
+                        let base = i * 3;
+                        let v_graph: &Vec<f32> = &self.screen.graphs[base]
+                            .iter()
+                            .map(|v| v.z)
+                            .collect::<Vec<f32>>();
+                        let acc_graph = &self.screen.graphs[base + 1]
+                            .iter()
+                            .map(|v| v.z)
+                            .collect::<Vec<f32>>();
+                        let z_graph = &self.screen.graphs[base + 2]
+                            .iter()
+                            .map(|v| v.z)
+                            .collect::<Vec<f32>>();
+
+                        simple_plot::plot!(
+                            &format!("Velocity vs Time for {}kg", sprite.mass),
+                            v_graph
+                        );
+                        simple_plot::plot!(
+                            &format!("Acceleration vs Time for {}kg", sprite.mass),
+                            acc_graph
+                        );
+                        simple_plot::plot!(
+                            &format!("Height vs Time for {}kg", sprite.mass),
+                            z_graph
+                        );
+                        sprite.flag = true;
+                    }
+                    draw_sprite(
+                        frame,
+                        screen_width,
+                        screen_height,
+                        origin_x,
+                        origin_y,
+                        zoom,
+                        self.grid.tile_width,
+                        sprite.pos,
+                        &sprite,
+                    );
+                }
+            }
+            //draw_sprite(
+            //    frame,
+            //    screen_width,
+            //    screen_height,
+            //    origin_x,
+            //    origin_y,
+            //    zoom,
+            //    self.grid.tile_width,
+            //    0.,
+            //    6.,
+            //    &self.screen.sprites[1],
+            //);
+            //draw_sprite(
+            //    frame,
+            //    screen_width,
+            //    screen_height,
+            //    origin_x,
+            //    origin_y,
+            //    zoom,
+            //    self.grid.tile_width,
+            //    6. + self.tick as f32 / 100.,
+            //    10.4,
+            //    &self.screen.sprites[3],
+            //);
+            //draw_sprite(
+            //    frame,
+            //    screen_width,
+            //    screen_height,
+            //    origin_x,
+            //    origin_y,
+            //    zoom,
+            //    self.grid.tile_width,
+            //    6. + self.tick as f32 / 100.,
+            //    10.4,
+            //    &self.screen.sprites[0],
+            //);
             draw_text(
                 frame,
                 screen_width,
@@ -291,6 +351,28 @@ impl Renderer {
                 &format!("Tile: ({:.2}, {:.2})", selected_x, selected_y),
                 100,
                 140,
+                36.0,
+                [255, 0, 0],
+            );
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
+                &format!("Acceleration: {:.2}", self.screen.sprites[0].acc),
+                100,
+                180,
+                36.0,
+                [255, 0, 0],
+            );
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
+                &format!("Velocity: {:.2}", self.screen.sprites[0].vel),
+                100,
+                220,
                 36.0,
                 [255, 0, 0],
             );
@@ -447,7 +529,7 @@ impl ApplicationHandler for Renderer {
                                 }
                                 content.push_str("}\n");
                             }
-                            fs::write("tiles.txt", content).expect("Failed to save tiles");
+                            fs::write("space.txt", content).expect("Failed to save tiles");
                         }
                         Key::Character(c) => {
                             if let Some(n) = c.to_ascii_lowercase().parse::<u32>().ok() {
@@ -474,15 +556,21 @@ impl ApplicationHandler for Renderer {
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
                 };
                 let old_zoom = self.screen.zoom;
-                self.screen.zoom = (self.screen.zoom + scroll * 0.25).clamp(0.25, 7.0);
+                self.screen.zoom = (self.screen.zoom + scroll * 0.25).clamp(0.1, 7.0);
                 let zoom_ratio = self.screen.zoom / old_zoom;
 
-                // keep the point under the mouse stationary on screen
-                self.screen.origin_x =
-                    self.screen.mouse_x - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio;
-                self.screen.origin_y =
-                    self.screen.mouse_y - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio;
-
+                if self.screen.zoom < 0.1 {
+                    self.screen.origin_x = self.screen.mouse_x
+                        - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio / 100.;
+                    self.screen.origin_y = self.screen.mouse_y
+                        - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio / 100.;
+                } else {
+                    // keep the point under the mouse stationary on screen
+                    self.screen.origin_x = self.screen.mouse_x
+                        - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio;
+                    self.screen.origin_y = self.screen.mouse_y
+                        - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio;
+                }
                 // multiplicative: every notch is the same percentage change
                 //self.screen.target_zoom =
                 //    (self.screen.target_zoom * 2_f32.powf(scroll)).clamp(0.25, 4.0);
@@ -576,5 +664,33 @@ impl ApplicationHandler for Renderer {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+fn falling(tick: u32, sprite: &mut Sprite, wind: Vec3) {
+    let dt = tick as f32 / 1000.;
+
+    let wf = Vec3::from(0., 0., -9.8 * sprite.mass);
+
+    let p: f32 = 1.225; // Density of fluid
+    let a = 1.; // surface area
+    let cd = 0.5; // Drag  coeefficent
+
+    let rel_v = sprite.vel - wind;
+
+    let speed = rel_v.magnitude();
+    //let df = rel_v * (0.5 * p) * (speed * cd * a);
+    let df = rel_v * (-0.5 * p * cd * a * speed);
+    let acc = (wf + df) / sprite.mass;
+    let dv = acc * dt;
+
+    if sprite.pos.z > 0. {
+        sprite.acc = acc;
+
+        sprite.vel += dv;
+
+        sprite.pos += sprite.vel * dt;
+    } else {
+        sprite.pos.z = 0.;
     }
 }

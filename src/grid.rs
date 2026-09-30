@@ -9,12 +9,14 @@ pub type Px = (u8, u8, u8, u8);
 #[derive(Debug, Clone)]
 pub struct Tile {
     pub pxs: Vec<Px>,
+    pub z: u32,
 }
 
 impl Tile {
     pub fn empty(w: usize, h: usize) -> Self {
         Self {
             pxs: vec![(0, 0, 0, 0); w * h],
+            z: 0,
         }
     }
 
@@ -25,7 +27,7 @@ impl Tile {
             .map(|(_x, _y, color)| (color[0], color[1], color[2], color[3]))
             .collect();
 
-        Ok(Self { pxs: pxs })
+        Ok(Self { pxs: pxs, z: 0 })
     }
 
     pub fn random(w: usize, h: usize) -> Self {
@@ -40,7 +42,7 @@ impl Tile {
             })
             .collect();
 
-        Self { pxs }
+        Self { pxs, z: 0 }
     }
 }
 
@@ -59,6 +61,18 @@ impl Grid {
             tile_height: tile_h,
             height,
             tiles: vec![Tile::empty(tile_w as usize, tile_h as usize); (width * height) as usize],
+        }
+    }
+
+    pub fn default(width: u32, height: u32, tile_w: u32, tile_h: u32) -> Self {
+        let dir = "/home/rabbit/Downloads/isometric tileset/separated images";
+        let tile = Tile::from_image(&format!("{}/tile_000.png", dir)).unwrap();
+        Self {
+            width,
+            tile_width: tile_w,
+            tile_height: tile_h,
+            height,
+            tiles: vec![tile; (width * height) as usize],
         }
     }
 
