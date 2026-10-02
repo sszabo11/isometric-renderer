@@ -65,8 +65,10 @@ impl Grid {
     }
 
     pub fn default(width: u32, height: u32, tile_w: u32, tile_h: u32) -> Self {
-        let dir = "/home/rabbit/Downloads/isometric tileset/separated images";
-        let tile = Tile::from_image(&format!("{}/tile_000.png", dir)).unwrap();
+        //let dir = "/home/rabbit/Downloads/isometric tileset/separated images";
+        //let tile = Tile::from_image(&format!("{}/tile_000.png", dir)).unwrap();
+        let dir = "/home/rabbit/Downloads/isometric tileset/128x128";
+        let tile = Tile::from_image(&format!("{}/grass.png", dir)).unwrap();
         Self {
             width,
             tile_width: tile_w,

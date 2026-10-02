@@ -11,7 +11,13 @@ pub struct Sprite {
     pub vel: Vec3,
     pub pos: Vec3,
     pub mass: f32,
+    pub bank_angle: f32,
+    pub banking: i32,
+    pub pitching: i32,
+    pub angle_attack: f32,
+    pub landed: bool,
     pub flag: bool,
+    pub tracking: bool,
 }
 pub fn load_sprite(path: &str, pos: Vec3) -> Result<Sprite> {
     let img = ImageReader::open(path)?.decode()?;
@@ -24,12 +30,18 @@ pub fn load_sprite(path: &str, pos: Vec3) -> Result<Sprite> {
     Ok(Sprite {
         pxs,
         mass: 1.,
+        tracking: false,
+        landed: false,
         flag: false,
+        banking: 0,
+        pitching: 0,
         width: img.width(),
         pos,
         //x,
         //y,
         //z: 550.,
+        bank_angle: 0.,
+        angle_attack: 0.,
         vel: Vec3::default(),
         acc: Vec3::default(),
         height: img.height(),
@@ -86,7 +98,7 @@ pub fn draw_sprite2(
         }
     }
 }
-pub fn draw_sprite(
+pub fn draw_sprite3(
     frame: &mut [u8],
     screen_width: usize,
     screen_height: usize,
@@ -100,7 +112,7 @@ pub fn draw_sprite(
     let footprint_w = tile_width as f32 * zoom;
     let footprint_h = footprint_w / 2.0;
 
-    let hs = 20.;
+    let hs = 2.;
     let iso_x = origin_x + (pos.x - pos.y) * (footprint_w / 2.0);
     let iso_y = origin_y + (pos.x + pos.y) * (footprint_h / 2.0);
 
@@ -141,29 +153,6 @@ pub fn draw_sprite(
                 6.0,
                 0.35,
             );
-            //{
-            //    let shadow_x = screen_x - 10;
-            //    let shadow_y = screen_y - 10;
-            //    let a = 30;
-            //    let b = 4;
-
-            //    let a_h = a / 2;
-            //    let b_h = b / 2;
-
-            //    let mut y = a_h;
-            //    let mut x = 0;
-
-            //    while y >= -a_h {
-            //        let i1 = ((y + shadow_y) * screen_width as isize + x + shadow_x) as usize;
-            //        let i2 = ((y + shadow_y) * screen_width as isize - x + shadow_x) as usize;
-            //        let offset1 = i1 * 4;
-            //        let offset2 = i2 * 4;
-
-            //        frame[offset1..offset1 + 4].copy_from_slice(&[255, 255, 255, 255]);
-            //        //frame[i2..i2 + 4].copy_from_slice(&[255, 255, 0, 255]);
-            //        y -= 1;
-            //    }
-            //}
             if screen_x < 0
                 || screen_y < 0
                 || screen_x as usize >= screen_width
@@ -245,4 +234,91 @@ fn project(
     let screen_y = origin_y + (grid_x + grid_y) * (footprint_h / 2.0) - z * zoom;
 
     (screen_x, screen_y)
+}
+pub fn draw_sprite(
+    frame: &mut [u8],
+    screen_width: usize,
+    screen_height: usize,
+    origin_x: f32,
+    origin_y: f32,
+    zoom: f32,
+    tile_width: u32,
+    pos: Vec3,
+    sprite: &Sprite,
+) {
+    let footprint_w = tile_width as f32 * zoom;
+    let footprint_h = footprint_w / 2.0;
+    let hs = 2.;
+
+    let iso_x = origin_x + (pos.x - pos.y) * (footprint_w / 2.0);
+    let iso_y = origin_y + (pos.x + pos.y) * (footprint_h / 2.0);
+
+    // Shadow: once per sprite, and it does NOT rotate with the bank angle
+    let (shadow_x, shadow_y) = project(
+        origin_x,
+        origin_y,
+        zoom,
+        tile_width as f32,
+        pos.x,
+        pos.y,
+        0.,
+    );
+    draw_shadow(
+        frame,
+        screen_width,
+        screen_height,
+        shadow_x as isize + 20,
+        shadow_y as isize + 10,
+        15.0,
+        6.0,
+        0.35,
+    );
+
+    let src_w = sprite.width as usize;
+    let src_h = sprite.height as usize;
+    let scaled_w = sprite.width as f32 * zoom;
+    let scaled_h = sprite.height as f32 * zoom;
+
+    // bank_angle is in degrees
+    let (sin_a, cos_a) = sprite.bank_angle.to_radians().sin_cos();
+
+    // Rotate around the sprite's center, which stays where the unrotated sprite's center was
+    let cx = iso_x + scaled_w / 2.0;
+    let cy = iso_y - (pos.z * hs) * zoom + scaled_h / 2.0;
+
+    // Bounding box of the rotated rectangle
+    let half_bw = (scaled_w * cos_a.abs() + scaled_h * sin_a.abs()) / 2.0;
+    let half_bh = (scaled_w * sin_a.abs() + scaled_h * cos_a.abs()) / 2.0;
+
+    // Clip the loop to the visible screen
+    let x0 = ((cx - half_bw).floor() as isize).max(0);
+    let x1 = ((cx + half_bw).ceil() as isize).min(screen_width as isize);
+    let y0 = ((cy - half_bh).floor() as isize).max(0);
+    let y1 = ((cy + half_bh).ceil() as isize).min(screen_height as isize);
+
+    for sy in y0..y1 {
+        for sx in x0..x1 {
+            // Offset from the center, then rotate by -angle to find the source position
+            let dx = sx as f32 + 0.5 - cx;
+            let dy = sy as f32 + 0.5 - cy;
+            let rx = dx * cos_a + dy * sin_a;
+            let ry = -dx * sin_a + dy * cos_a;
+
+            // Back to sprite pixel coordinates (undo zoom, shift origin to top-left)
+            let src_x = (rx + scaled_w / 2.0) / zoom;
+            let src_y = (ry + scaled_h / 2.0) / zoom;
+
+            if src_x < 0.0 || src_y < 0.0 || src_x >= src_w as f32 || src_y >= src_h as f32 {
+                continue;
+            }
+
+            let px = sprite.pxs[src_y as usize * src_w + src_x as usize];
+            if px.3 == 0 {
+                continue;
+            }
+
+            let offset = (sy as usize * screen_width + sx as usize) * 4;
+            frame[offset..offset + 4].copy_from_slice(&[px.0, px.1, px.2, px.3]);
+        }
+    }
 }

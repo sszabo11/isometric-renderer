@@ -4,8 +4,8 @@ use winit::event_loop::{ControlFlow, EventLoop};
 fn main() {
     const GRID_WIDTH: u32 = 32;
     const GRID_HEIGHT: u32 = 32;
-    const TILE_WIDTH: u32 = 32;
-    const TILE_HEIGHT: u32 = 32;
+    const TILE_WIDTH: u32 = 128;
+    const TILE_HEIGHT: u32 = 128;
     const SCREEN_WIDTH: u32 = GRID_WIDTH * TILE_WIDTH;
     const SCREEN_HEIGHT: u32 = GRID_HEIGHT * TILE_HEIGHT;
 
@@ -23,12 +23,17 @@ fn main() {
     let sprites = ["/home/rabbit/Downloads/isometric tileset/sprites/bowling-ball2.png"];
     //app.screen.load_sprites(&sprites);
 
-    let path = "/home/rabbit/Downloads/isometric tileset/sprites/bowling-ball2.png";
+    let path = "/home/rabbit/Downloads/isometric tileset/128x128/capsule.png";
 
     app.screen
-        .load_sprite(path, 100., Vec3::from(3., 4., 1000.));
-    app.screen.load_sprite(path, 10., Vec3::from(3., 6., 1000.));
-    app.screen.load_sprite(path, 1., Vec3::from(3., 8., 1000.));
+        .load_sprite(path, 1., Vec3::from(-30., -8., 1000.));
+    app.screen.sprites[0].angle_attack = 90.;
+    app.screen.sprites[0].vel.x = 0.;
+    app.screen.sprites[0].tracking = true;
+    app.screen
+        .load_sprite(path, 500., Vec3::from(3., 6., 9000.));
+    app.screen
+        .load_sprite(path, 1000., Vec3::from(3., 4., 9000.));
     println!("loaded");
 
     let event_loop = EventLoop::new().expect("failed to create event loop");

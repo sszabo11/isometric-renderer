@@ -49,6 +49,9 @@ impl Div<f32> for Vec3 {
     type Output = Self;
 
     fn div(self, rhs: f32) -> Self::Output {
+        if rhs == 0. {
+            return self;
+        }
         Self {
             x: self.x / rhs,
             y: self.y / rhs,
@@ -98,8 +101,28 @@ impl Vec3 {
         (self.x.powf(2.) + self.y.powf(2.) + self.z.powf(2.)).sqrt()
     }
 
+    pub fn mag_squared(&self) -> f32 {
+        self.x.powf(2.) + self.y.powf(2.) + self.z.powf(2.)
+    }
+
     pub fn dot(&self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
+    }
+
+    pub fn mul_vec(&self, rhs: Self) -> Self {
+        Self {
+            x: self.x * rhs.x,
+            y: self.y * rhs.y,
+            z: self.z * rhs.z,
+        }
+    }
+
+    pub fn cross(&self, rhs: Self) -> Self {
+        Self {
+            x: self.y * rhs.z - self.z * rhs.y,
+            y: self.z * rhs.x - self.x * rhs.z,
+            z: self.x * rhs.y - self.y * rhs.x,
+        }
     }
 
     pub fn sqrt(&self) -> Self {

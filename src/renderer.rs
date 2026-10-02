@@ -1,8 +1,7 @@
-use std::{fs, sync::Arc, time::Instant};
+use std::{f32::consts::PI, fs, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use fontdue::Font;
-use image::{GenericImageView, ImageReader};
 use pixels::{Error, Pixels, SurfaceTexture};
 use rand::{RngExt, SeedableRng, rand_core::block::Generator};
 use winit::{
@@ -14,12 +13,17 @@ use winit::{
 };
 
 use crate::{
+    bg::draw_background,
     grid::{Grid, Tile},
+    hud::{draw_bank_gauge, draw_hud, flight_angles},
     screen::Screen,
     sprite::{Sprite, draw_sprite, load_sprite},
     vec::Vec3,
 };
 
+const AOA_RATE: f32 = 20.0; // degrees per second
+const BANK_RATE: f32 = 30.0; // degrees per second
+const TRIM_AOA: f32 = 30.0; // where AoA settles when released
 pub struct Renderer {
     pub grid: Grid,
     pub window: Option<Arc<Window>>,
@@ -37,6 +41,10 @@ pub struct Renderer {
     //pub world: World,
     pub last_frame: std::time::Instant,
     pub tick: u32,
+
+    pub accumulator: f32,
+    pub sim_time: f32,
+    pub time_warp: f32,
 }
 
 pub fn read_tile_file(path: &str) -> (Vec<Tile>, u32, u32, u32, u32) {
@@ -83,7 +91,7 @@ pub fn read_tile_file(path: &str) -> (Vec<Tile>, u32, u32, u32, u32) {
     (tiles, tile_width, tile_height, grid_w, grid_h)
 }
 
-fn draw_text(
+pub fn draw_text(
     frame: &mut [u8],
     screen_width: usize,
     screen_height: usize,
@@ -153,10 +161,37 @@ impl Renderer {
             screen: Screen::default(),
             tick: 0,
             last_frame: Instant::now(),
+            accumulator: 0.,
+            time_warp: 1.,
+            sim_time: 0.,
         }
     }
 
+    fn follow_camera(&mut self) {
+        if !self.screen.follow {
+            return;
+        }
+        let Some(s) = self.screen.sprites.get(self.screen.follow_idx) else {
+            return;
+        };
+
+        let zoom = self.screen.zoom;
+        let fw = self.grid.tile_width as f32 * zoom; // same footprint math as draw_sprite
+        let fh = fw / 2.0;
+        let hs = 2.0; // same height scale as draw_sprite
+
+        let sw = s.width as f32 * zoom;
+        let sh = s.height as f32 * zoom;
+
+        // Where the sprite's center sits relative to the origin
+        let off_x = (s.pos.x - s.pos.y) * (fw / 2.0) + sw / 2.0;
+        let off_y = (s.pos.x + s.pos.y) * (fh / 2.0) - s.pos.z * hs * zoom + sh / 2.0;
+
+        self.screen.origin_x = self.screen_width as f32 / 2.0 - off_x;
+        self.screen.origin_y = self.screen_height as f32 / 2.0 - off_y;
+    }
     pub fn draw(&mut self) -> Result<(), Error> {
+        self.follow_camera();
         let zoom = self.screen.zoom;
         let origin_x = self.screen.origin_x;
         let origin_y = self.screen.origin_y;
@@ -185,6 +220,13 @@ impl Renderer {
         if let Some(pixels) = self.pixels.as_mut() {
             let frame = pixels.frame_mut();
             frame.fill(0);
+            draw_background(
+                frame,
+                screen_width,
+                screen_height,
+                self.screen.origin_y,
+                self.screen.bound_y,
+            );
 
             // Get tile place
             for ty in 0..self.grid.height as usize {
@@ -230,48 +272,50 @@ impl Renderer {
             }
             if self.screen.sprites.len() > 0 {
                 for (i, sprite) in self.screen.sprites.iter_mut().enumerate() {
-                    falling(self.tick, sprite, self.screen.wind);
-                    //println!("i: {}", i);
-                    //println!("{:?}", self.screen.graphs);
-                    //println!("{:?}", self.screen.graphs[0]);
+                    //if self.screen.space_pressed {
+                    //    falling(self.tick, sprite, self.screen.wind);
+                    //    //println!("i: {}", i);
+                    //    //println!("{:?}", self.screen.graphs);
+                    //    //println!("{:?}", self.screen.graphs[0]);
 
-                    if self.tick % 1 == 0 {
-                        let base = i * 3;
-                        self.screen.graphs[base + 0].push(sprite.vel);
-                        self.screen.graphs[base + 1].push(sprite.acc);
-                        self.screen.graphs[base + 2].push(sprite.pos);
-                    }
+                    //    if self.tick % 1 == 0 {
+                    //        let base = i * 3;
+                    //        self.screen.graphs[base + 0].push(sprite.vel);
+                    //        self.screen.graphs[base + 1].push(sprite.acc);
+                    //        self.screen.graphs[base + 2].push(sprite.pos);
+                    //    }
 
-                    if sprite.pos.z == 0. && !sprite.flag {
-                        println!("Saving...");
-                        let base = i * 3;
-                        let v_graph: &Vec<f32> = &self.screen.graphs[base]
-                            .iter()
-                            .map(|v| v.z)
-                            .collect::<Vec<f32>>();
-                        let acc_graph = &self.screen.graphs[base + 1]
-                            .iter()
-                            .map(|v| v.z)
-                            .collect::<Vec<f32>>();
-                        let z_graph = &self.screen.graphs[base + 2]
-                            .iter()
-                            .map(|v| v.z)
-                            .collect::<Vec<f32>>();
+                    //    if sprite.pos.z == 0. && !sprite.flag {
+                    //        println!("Saving...");
+                    //        let base = i * 3;
+                    //        let v_graph: &Vec<f32> = &self.screen.graphs[base]
+                    //            .iter()
+                    //            .map(|v| v.z)
+                    //            .collect::<Vec<f32>>();
+                    //        let acc_graph = &self.screen.graphs[base + 1]
+                    //            .iter()
+                    //            .map(|v| v.z)
+                    //            .collect::<Vec<f32>>();
+                    //        let z_graph = &self.screen.graphs[base + 2]
+                    //            .iter()
+                    //            .map(|v| v.z)
+                    //            .collect::<Vec<f32>>();
 
-                        simple_plot::plot!(
-                            &format!("Velocity vs Time for {}kg", sprite.mass),
-                            v_graph
-                        );
-                        simple_plot::plot!(
-                            &format!("Acceleration vs Time for {}kg", sprite.mass),
-                            acc_graph
-                        );
-                        simple_plot::plot!(
-                            &format!("Height vs Time for {}kg", sprite.mass),
-                            z_graph
-                        );
-                        sprite.flag = true;
-                    }
+                    //        //simple_plot::plot!(
+                    //        //    &format!("Velocity vs Time for {}kg", sprite.mass),
+                    //        //    v_graph
+                    //        //);
+                    //        //simple_plot::plot!(
+                    //        //    &format!("Acceleration vs Time for {}kg", sprite.mass),
+                    //        //    acc_graph
+                    //        //);
+                    //        //simple_plot::plot!(
+                    //        //    &format!("Height vs Time for {}kg", sprite.mass),
+                    //        //    z_graph
+                    //        //);
+                    //        sprite.flag = true;
+                    //    }
+                    //}
                     draw_sprite(
                         frame,
                         screen_width,
@@ -284,6 +328,27 @@ impl Renderer {
                         &sprite,
                     );
                 }
+            }
+            if let Some(s) = self.screen.sprites.get(0) {
+                let angles = flight_angles(s.vel - self.screen.wind, s.angle_attack);
+                draw_hud(
+                    frame,
+                    screen_width,
+                    screen_height,
+                    &self.font,
+                    &angles,
+                    screen_width as i32 - 280,
+                    150,
+                );
+                draw_bank_gauge(
+                    frame,
+                    screen_width,
+                    screen_height,
+                    &self.font,
+                    s.bank_angle,
+                    screen_width as i32 - 280,
+                    150 + 295,
+                );
             }
             //draw_sprite(
             //    frame,
@@ -326,6 +391,43 @@ impl Renderer {
                 screen_width,
                 screen_height,
                 &self.font,
+                &format!("Time warp: {}x", self.time_warp),
+                (self.screen_width - 300) as i32,
+                60,
+                36.0,
+                [255, 0, 0],
+            );
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
+                &format!("Sim time: {:.2}", self.sim_time),
+                (self.screen_width - 300) as i32,
+                100,
+                36.0,
+                [255, 0, 0],
+            );
+            let sprite = &self.screen.sprites[0];
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
+                &format!(
+                    "X-vel: {:.2} | Y-vel: {:.2} | Z-vel: {:.2}",
+                    sprite.vel.x, sprite.vel.y, sprite.vel.z
+                ),
+                60,
+                (self.screen_height - 100) as i32,
+                36.0,
+                [255, 0, 0],
+            );
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
                 &format!("Tile number: {}", self.screen.tile_n),
                 100,
                 60,
@@ -359,7 +461,7 @@ impl Renderer {
                 screen_width,
                 screen_height,
                 &self.font,
-                &format!("Acceleration: {:.2}", self.screen.sprites[0].acc),
+                &format!("Acceleration: {:.2}", self.screen.sprites[0].acc.z),
                 100,
                 180,
                 36.0,
@@ -370,9 +472,20 @@ impl Renderer {
                 screen_width,
                 screen_height,
                 &self.font,
-                &format!("Velocity: {:.2}", self.screen.sprites[0].vel),
+                &format!("Velocity: {:.2}", self.screen.sprites[0].vel.z),
                 100,
                 220,
+                36.0,
+                [255, 0, 0],
+            );
+            draw_text(
+                frame,
+                screen_width,
+                screen_height,
+                &self.font,
+                &format!("Bank angle: {:.2}", self.screen.sprites[0].bank_angle),
+                100,
+                260,
                 36.0,
                 [255, 0, 0],
             );
@@ -384,42 +497,9 @@ impl Renderer {
 
         Ok(())
     }
-    fn update_zoom(&mut self, dt: f32) -> bool {
-        let zoom = self.screen.zoom;
-        let target_zoom = self.screen.target_zoom;
-        let zoom_anchor = self.screen.zoom_anchor;
-        let origin_x = self.screen.origin_x;
-        let origin_y = self.screen.origin_y;
-        let mouse_x = self.screen.mouse_x;
-        let mouse_y = self.screen.mouse_y;
 
-        if (target_zoom - zoom).abs() < 0.0005 {
-            return false;
-        }
-
-        // Frame-rate-independent easing. Higher constant = snappier.
-        let t = 1.0 - (-19.0 * dt).exp();
-        // Interpolate in log space so zooming in and out feel symmetric.
-        let mut new_zoom = zoom * (target_zoom / zoom).powf(t);
-
-        // snap when close enough, so it settles exactly
-        if (new_zoom - target_zoom).abs() < 0.001 {
-            new_zoom = target_zoom;
-        }
-
-        // keep the point under the cursor fixed, on every animation frame
-        let ratio = new_zoom / zoom;
-        let (ax, ay) = zoom_anchor;
-        self.screen.origin_x = ax - (ax - origin_x) * ratio;
-        self.screen.origin_y = ay - (ay - origin_y) * ratio;
-        self.screen.zoom = new_zoom;
-
-        true
-    }
     fn get_tile(&self, mouse_x: f32, mouse_y: f32) -> (i32, i32) {
         let zoom = self.screen.zoom;
-        let target_zoom = self.screen.target_zoom;
-        let zoom_anchor = self.screen.zoom_anchor;
         let origin_x = self.screen.origin_x;
         let origin_y = self.screen.origin_y;
         let mouse_x = self.screen.mouse_x;
@@ -431,10 +511,6 @@ impl Renderer {
         let rel_x = mouse_x - origin_x;
         let rel_y = mouse_y - origin_y + (canvas_h - footprint_h); // undo the same shift draw() applies
 
-        //let half_w = self.grid.tile_width as f32 / 2.0;
-        //let half_h = self.grid.tile_height as f32 / 2.0;
-        //let half_w = (self.grid.tile_width as f32 * zoom) / 2.0;
-        //let half_h = (self.grid.tile_height as f32 * zoom) / 2.0;
         let half_w = (self.grid.tile_width as f32 * zoom) / 2.0;
         let half_h = half_w / 2.0;
 
@@ -442,7 +518,6 @@ impl Renderer {
         let ty = (rel_y / half_h - rel_x / half_w) / 2.0;
 
         let selected_x = tx.floor() as i32;
-        println!("se: {}", selected_x);
         let selected_y = ty.floor() as i32;
         (selected_x, selected_y)
     }
@@ -504,9 +579,52 @@ impl ApplicationHandler for Renderer {
                 event,
                 is_synthetic,
             } => {
+                match &event.logical_key {
+                    Key::Character(c) => {
+                        match c.to_ascii_lowercase().chars().next().unwrap() {
+                            'a' => {
+                                if event.state.is_pressed() {
+                                    self.screen.sprites[0].banking = -1;
+                                } else {
+                                    self.screen.sprites[0].banking = 0;
+                                }
+                                //self.screen.sprites[0].bank_angle -= 1.;
+                                //self.screen.sprites[0].bank_angle.clamp(-180, max)
+                            }
+                            'd' => {
+                                if event.state.is_pressed() {
+                                    self.screen.sprites[0].banking = 1;
+                                } else {
+                                    self.screen.sprites[0].banking = 0;
+                                }
+                                //self.screen.sprites[0].bank_angle += 1.;
+                            }
+                            's' => {
+                                if event.state.is_pressed() {
+                                    self.screen.sprites[0].pitching = -1;
+                                } else {
+                                    self.screen.sprites[0].pitching = 0;
+                                }
+                                //self.screen.sprites[0].bank_angle -= 1.;
+                                //self.screen.sprites[0].bank_angle.clamp(-180, max)
+                            }
+                            'w' => {
+                                if event.state.is_pressed() {
+                                    self.screen.sprites[0].pitching = 1;
+                                } else {
+                                    self.screen.sprites[0].pitching = 0;
+                                }
+                                //self.screen.sprites[0].bank_angle += 1.;
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
                 if event.state.is_pressed() {
                     match event.logical_key {
                         Key::Named(NamedKey::Backspace) => self.screen.tile_n = 0,
+                        Key::Named(NamedKey::Space) => self.screen.space_pressed = true,
                         Key::Named(NamedKey::Alt) => {
                             println!("Saving...");
 
@@ -532,6 +650,29 @@ impl ApplicationHandler for Renderer {
                             fs::write("space.txt", content).expect("Failed to save tiles");
                         }
                         Key::Character(c) => {
+                            match c.to_ascii_lowercase().chars().next().unwrap() {
+                                //'a' => {
+                                //    self.screen.sprites[0].banking = -1;
+                                //    //self.screen.sprites[0].bank_angle -= 1.;
+                                //    //self.screen.sprites[0].bank_angle.clamp(-180, max)
+                                //}
+                                //'d' => {
+                                //    self.screen.sprites[0].banking = 1;
+                                //    //self.screen.sprites[0].bank_angle += 1.;
+                                //}
+                                'f' => {
+                                    self.screen.follow = !self.screen.follow;
+                                }
+                                ',' => {
+                                    let warp = self.time_warp - 1.;
+                                    self.time_warp = warp.clamp(0., 100.);
+                                }
+                                '.' => {
+                                    let warp = self.time_warp + 1.;
+                                    self.time_warp = warp.clamp(0., 100.);
+                                }
+                                _ => {}
+                            }
                             if let Some(n) = c.to_ascii_lowercase().parse::<u32>().ok() {
                                 println!("n: {}", n);
                                 println!(
@@ -556,45 +697,39 @@ impl ApplicationHandler for Renderer {
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
                 };
                 let old_zoom = self.screen.zoom;
-                self.screen.zoom = (self.screen.zoom + scroll * 0.25).clamp(0.1, 7.0);
-                let zoom_ratio = self.screen.zoom / old_zoom;
+                self.screen.zoom = (self.screen.zoom + scroll * 0.1).clamp(0.01, 7.0);
+                if !self.screen.follow {
+                    let zoom_ratio = self.screen.zoom / old_zoom;
 
-                if self.screen.zoom < 0.1 {
-                    self.screen.origin_x = self.screen.mouse_x
-                        - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio / 100.;
-                    self.screen.origin_y = self.screen.mouse_y
-                        - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio / 100.;
-                } else {
-                    // keep the point under the mouse stationary on screen
-                    self.screen.origin_x = self.screen.mouse_x
-                        - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio;
-                    self.screen.origin_y = self.screen.mouse_y
-                        - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio;
+                    if self.screen.zoom < 0.1 {
+                        self.screen.origin_x = self.screen.mouse_x
+                            - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio / 100.;
+                        self.screen.origin_y = self.screen.mouse_y
+                            - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio / 100.;
+                    } else {
+                        // keep the point under the mouse stationary on screen
+                        self.screen.origin_x = self.screen.mouse_x
+                            - (self.screen.mouse_x - self.screen.origin_x) * zoom_ratio;
+                        self.screen.origin_y = self.screen.mouse_y
+                            - (self.screen.mouse_y - self.screen.origin_y) * zoom_ratio;
+                    }
                 }
-                // multiplicative: every notch is the same percentage change
-                //self.screen.target_zoom =
-                //    (self.screen.target_zoom * 2_f32.powf(scroll)).clamp(0.25, 4.0);
-                //self.screen.zoom_anchor = (self.screen.mouse_x, self.screen.mouse_y);
-                //self.window.as_ref().unwrap().request_redraw();
-
-                //zoom += scroll_amount * 0.1; // tune sensitivity to taste
-                //zoom = self.zoom.clamp(0.25, 4.0); // prevent zooming to zero or absurdly large
-
-                //let old_zoom = zoom;
-                //zoom = (self.zoom + scroll_amount * 0.1).clamp(0.25, 4.0);
-                //let zoom_ratio = zoom / old_zoom;
-
-                //// keep the point under the mouse stationary on screen
-                //origin_x = mouse_x - (self.mouse_x - self.origin_x as f32) * zoom_ratio;
-                //origin_y = mouse_y - (self.mouse_y - self.origin_y as f32) * zoom_ratio;
-
-                //self.window.as_ref().unwrap().request_redraw();
             }
+
             WindowEvent::MouseInput {
                 device_id,
                 state,
                 button,
             } => match button {
+                MouseButton::Right => {
+                    if state.is_pressed() {
+                        self.screen.offset_x = self.screen.mouse_x - self.screen.origin_x;
+                        self.screen.offset_y = self.screen.mouse_y - self.screen.origin_y;
+                        self.screen.holding_right = true;
+                    } else {
+                        self.screen.holding_right = false;
+                    }
+                }
                 MouseButton::Left => {
                     let (selected_x, selected_y) =
                         self.get_tile(self.screen.mouse_x, self.screen.mouse_y);
@@ -623,40 +758,94 @@ impl ApplicationHandler for Renderer {
                 self.screen.mouse_x = position.x as f32;
                 self.screen.mouse_y = position.y as f32;
 
-                //let (selected_x, selected_y) = self.get_tile(mouse_x, mouse_y);
-
-                //if selected_x >= 0
-                //    && selected_x < self.grid.width as i32
-                //    && selected_y >= 0
-                //    && selected_y < self.grid.height as i32
-                //{
-                //    let idx = selected_y * self.grid.width as i32 + selected_x;
-                //    self.grid.tiles[idx as usize].pxs = Tile::random(
-                //        self.grid.tile_width as usize,
-                //        self.grid.tile_height as usize,
-                //    )
-                //    .pxs;
-                //}
+                if self.screen.holding_right {
+                    self.screen.origin_x = self.screen.mouse_x - self.screen.offset_x;
+                    self.screen.origin_y = self.screen.mouse_y - self.screen.offset_y;
+                }
             }
             WindowEvent::RedrawRequested => {
+                const DT: f32 = 0.004; // fixed physics step: 250 Hz
+                const MAX_STEPS: u32 = 2000; // safety cap per frame
+
                 let now = std::time::Instant::now();
-                // clamp dt: after idle time it could be seconds, which would skip the animation
-                let dt = (now - self.last_frame).as_secs_f32().min(1.0 / 30.0);
+                let frame_dt = (now - self.last_frame).as_secs_f32().min(0.1);
                 self.last_frame = now;
 
-                //let still_zooming = self.update_zoom(dt);
+                self.accumulator += frame_dt * self.time_warp;
 
-                self.tick += 1;
+                //let sprite = &mut self.screen.sprites[0];
+                //if sprite.banking > 0 {
+                //    sprite.bank_angle += 1.;
+                //} else if sprite.banking < 0 {
+                //    sprite.bank_angle -= 1.;
+                //} else {
+                //    if sprite.bank_angle > 0. {
+                //        sprite.bank_angle -= 1.;
+                //    } else {
+                //        sprite.bank_angle += 1.;
+                //    }
+                //}
+
+                //if sprite.pitching > 0 {
+                //    sprite.angle_attack += 1.;
+                //} else if sprite.pitching < 0 {
+                //    sprite.angle_attack -= 1.;
+                //} else {
+                //    if sprite.angle_attack > 30. {
+                //        sprite.angle_attack -= 1.;
+                //    } else {
+                //        sprite.angle_attack += 1.;
+                //    }
+                //}
+
+                let mut steps = 0;
+                while self.accumulator >= DT && steps < MAX_STEPS {
+                    if self.screen.sprites.len() > 0 && self.screen.space_pressed {
+                        for (i, sprite) in self.screen.sprites.iter_mut().enumerate() {
+                            update_controls(sprite, DT);
+                            if self.screen.space_pressed {
+                                falling(DT, sprite, self.screen.wind);
+
+                                if self.tick % 1 == 0 && !sprite.landed {
+                                    let base = i * 3;
+                                    self.screen.graphs[base + 0].push(sprite.vel);
+                                    self.screen.graphs[base + 1].push(sprite.acc);
+                                    self.screen.graphs[base + 2].push(sprite.pos);
+                                }
+
+                                if sprite.pos.z == 0. && !sprite.flag {
+                                    println!("Saving...");
+                                    let base = i * 3;
+                                    let v_graph: &Vec<f32> = &self.screen.graphs[base]
+                                        .iter()
+                                        .map(|v| v.z)
+                                        .collect::<Vec<f32>>();
+                                    let acc_graph = &self.screen.graphs[base + 1]
+                                        .iter()
+                                        .map(|v| v.z)
+                                        .collect::<Vec<f32>>();
+                                    let z_graph = &self.screen.graphs[base + 2]
+                                        .iter()
+                                        .map(|v| v.z)
+                                        .collect::<Vec<f32>>();
+
+                                    sprite.flag = true;
+                                }
+                            }
+                        }
+                    }
+                    //falling(DT, &mut self.screen.sprites[0], wind); // add a loop for each sprite
+                    self.accumulator -= DT;
+                    self.sim_time += DT;
+                    steps += 1;
+                }
+                if steps == MAX_STEPS {
+                    self.accumulator = 0.0; // drop the backlog instead of spiraling
+                }
                 if self.draw().is_err() {
                     event_loop.exit();
                 }
-                //if still_zooming {
                 self.window.as_ref().unwrap().request_redraw();
-
-                //}
-                //if let Err(err) = self.draw() {
-                //    event_loop.exit();
-                //}
             }
             _ => {}
         }
@@ -667,30 +856,90 @@ impl ApplicationHandler for Renderer {
     }
 }
 
-fn falling(tick: u32, sprite: &mut Sprite, wind: Vec3) {
-    let dt = tick as f32 / 1000.;
+fn falling(dt: f32, sprite: &mut Sprite, wind: Vec3) {
+    //let dt = tick as f32 / 1000.;
 
-    let wf = Vec3::from(0., 0., -9.8 * sprite.mass);
+    let gravity = Vec3::from(0., 0., -9.8 * sprite.mass);
 
     let p: f32 = 1.225; // Density of fluid
     let a = 1.; // surface area
-    let cd = 0.5; // Drag  coeefficent
+    //let cd = 2.0; // Drag  coeefficent
+    //let cl = 1.4; // Lift coeefficent
+    //let alpha = sprite.angle_attack.to_radians(); // aoa stored in degrees, like bank_angle
+    let alpha = sprite.angle_attack.clamp(0.0, 90.0).to_radians();
+    let cn_max = 2.0; // normal-force coefficient at 90°
+    let cd0 = 0.05; // baseline drag
+
+    let cn = cn_max * alpha.sin().powi(2);
+    let cl = cn * alpha.cos();
+    let cd = cd0 + cn * alpha.sin();
 
     let rel_v = sprite.vel - wind;
 
     let speed = rel_v.magnitude();
-    //let df = rel_v * (0.5 * p) * (speed * cd * a);
-    let df = rel_v * (-0.5 * p * cd * a * speed);
-    let acc = (wf + df) / sprite.mass;
-    let dv = acc * dt;
+    let drag = rel_v * (-0.5 * p * cd * a * speed);
 
-    if sprite.pos.z > 0. {
+    let mut lift_force = Vec3::from(0., 0., 0.);
+    if speed > 1e-3 {
+        let v_hat = rel_v / speed;
+
+        let mut reference = Vec3::from(0., 0., 1.);
+        let mut u_raw = reference - v_hat * reference.dot(v_hat);
+        if u_raw.magnitude() < 1e-3 {
+            reference = Vec3::from(1., 0., 0.);
+            u_raw = reference - v_hat * reference.dot(v_hat);
+        }
+
+        let u_hat = u_raw / u_raw.magnitude();
+
+        let w_hat = v_hat.cross(u_hat);
+
+        let lift_mag = 0.5 * p * cl * a * speed * speed;
+        let phi = sprite.bank_angle.to_radians();
+        let lift_dir = u_hat * phi.cos() + w_hat * phi.sin();
+        //let lift_dir = u_hat * (sprite.bank_angle.cos() * (PI / 180.)) + w_hat * sprite.bank_angle.sin() * (PI / 180.);
+        lift_force = lift_dir * lift_mag;
+    }
+
+    let acc = (gravity + drag + lift_force) / sprite.mass;
+
+    if !sprite.landed {
         sprite.acc = acc;
 
-        sprite.vel += dv;
+        sprite.vel += acc * dt;
 
         sprite.pos += sprite.vel * dt;
-    } else {
-        sprite.pos.z = 0.;
+        if sprite.pos.z <= 0. {
+            sprite.pos.z = 0.;
+            sprite.vel = Vec3::from(0., 0., 0.);
+            sprite.acc = Vec3::from(0., 0., 0.);
+            sprite.landed = true;
+        }
     }
+}
+fn move_toward(cur: f32, target: f32, max_delta: f32) -> f32 {
+    let d = target - cur;
+    if d.abs() <= max_delta {
+        target
+    } else {
+        cur + d.signum() * max_delta
+    }
+}
+fn update_controls(s: &mut Sprite, dt: f32) {
+    if s.pitching > 0 {
+        s.angle_attack += AOA_RATE * dt;
+    } else if s.pitching < 0 {
+        s.angle_attack -= AOA_RATE * dt;
+    } else {
+        s.angle_attack = move_toward(s.angle_attack, TRIM_AOA, AOA_RATE * dt);
+    }
+    s.angle_attack = s.angle_attack.clamp(0.0, 90.0);
+
+    if s.banking > 0 {
+        s.bank_angle += BANK_RATE * dt;
+    } else if s.banking < 0 {
+        s.bank_angle -= BANK_RATE * dt;
+    }
+    // keep the stored value in -180..180
+    s.bank_angle = (s.bank_angle + 180.0).rem_euclid(360.0) - 180.0;
 }

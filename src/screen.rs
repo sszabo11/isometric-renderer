@@ -8,13 +8,19 @@ pub struct Screen {
     pub mouse_y: f32,
     pub origin_x: f32,
     pub origin_y: f32,
+    pub offset_x: f32,
+    pub offset_y: f32,
     pub sprites: Vec<Sprite>,
     pub tile_n: u32,
+    pub space_pressed: bool,
     pub zoom: f32,
+    pub holding_right: bool,
     pub target_zoom: f32,
     pub zoom_anchor: (f32, f32), // screen point that should stay fixed while zooming
     pub graphs: Vec<Vec<Vec3>>,
-
+    pub bound_y: f32,
+    pub follow_idx: usize,
+    pub follow: bool,
     pub wind: Vec3,
 }
 
@@ -24,14 +30,21 @@ impl Default for Screen {
             mouse_x: 0.,
             mouse_y: 0.,
             tile_n: 1,
+            holding_right: false,
+            space_pressed: false,
             origin_x: 0.,
+            follow_idx: 0,
+            follow: true,
+            bound_y: 10000.,
             origin_y: 0.,
+            offset_x: 0.,
+            offset_y: 0.,
             zoom: 1.,
             sprites: vec![],
             target_zoom: 1.,
             graphs: vec![vec![]; 3 * 3],
             zoom_anchor: (0., 0.),
-            wind: Vec3::from(10., 0., 0.),
+            wind: Vec3::from(0.0, 0.0, 0.),
         }
     }
 }
